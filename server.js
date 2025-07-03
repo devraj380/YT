@@ -1,51 +1,57 @@
 const express = require('express');
-const cors = require('cors'); // Import the cors package
-const ytdl = require('ytdl-core');
+const cors = require('cors');
+const ytdl = require('ytdl-core-discord'); // <-- The crucial change is here
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Use CORS to allow requests from your Blogger site
 app.use(cors());
 
-// Health check endpoint
 app.get('/', (req, res) => {
-    res.send('YouTube Downloader Backend is running!');
+    res.send('YouTube Downloader Backend v2 is running!');
 });
 
-// Endpoint to get video info
 app.get('/videoInfo', async (req, res) => {
     const videoURL = req.query.url;
-    if (!ytdl.validateURL(videoURL)) {
-        return res.status(400).json({ error: "Invalid YouTube URL." });
+    if (!videoURL) {
+        return res.status(400).json({ error: "No URL provided." });
     }
+    
     try {
-        const info = await ytdl.getInfo(videoURL);
+        // We use ytdl.getBasicInfo for speed and reliability.
+        const info = await ytdl.getBasicInfo(videoURL);
+        const formats = info.formats.filter(f => f.hasVideo && f.hasAudio);
+
         res.json({
             title: info.videoDetails.title,
             thumbnail: info.videoDetails.thumbnails[info.videoDetails.thumbnails.length - 1].url,
-            formats: ytdl.filterFormats(info.formats, 'videoandaudio').map(f => ({
+            formats: formats.map(f => ({
                 quality: f.qualityLabel,
                 itag: f.itag,
                 container: f.container
             }))
         });
     } catch (error) {
-        res.status(500).json({ error: "Failed to fetch video information. The video might be private, age-restricted, or removed." });
+        // Log the actual error on the server for debugging
+        console.error("Error fetching video info:", error.message); 
+        res.status(500).json({ error: "Failed to fetch video information. The video might be private, age-restricted, or removed. It's also possible our server is being blocked by YouTube." });
     }
 });
 
-// Endpoint to download the video
 app.get('/download', async (req, res) => {
     try {
         const { url, itag, title } = req.query;
-        if (!ytdl.validateURL(url)) {
-            return res.status(400).send('Invalid YouTube URL.');
+        if (!url || !itag) {
+            return res.status(400).send('Missing URL or format information.');
         }
-        const info = await ytdl.getInfo(url);
-        const format = ytdl.chooseFormat(info.formats, { quality: itag });
-        res.header('Content-Disposition', `attachment; filename="${title}.${format.container}"`);
-        ytdl(url, { format }).pipe(res);
+
+        res.header('Content-Disposition', `attachment; filename="${title}.mp4"`);
+        res.header('Content-Type', 'video/mp4');
+
+        const stream = await ytdl(url, { filter: format => format.itag == itag });
+        stream.pipe(res);
+
     } catch (error) {
+        console.error("Error during download:", error.message);
         res.status(500).send('Error downloading video.');
     }
 });
